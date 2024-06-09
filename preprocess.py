@@ -57,6 +57,18 @@ def review_preprocessing(text, stopwords):
     return text
 
 
+def dataset_to_data_loader(dataset, tokenizer, batch_size):
+    xs, ys = tokenizer(dataset)
+    xs_pad = left_pad(xs)
+    ys_tensor = torch.stack(ys)
+    tensor_dataset = torch.utils.data.TensorDataset(xs_pad, ys_tensor)
+    data_loader = torch.utils.data.DataLoader(
+        tensor_dataset, batch_size=batch_size, shuffle=True
+    )
+
+    return data_loader
+
+
 def get_loaders(
     validate_dataset_size, batch_size, seq_max_length, tokenizer_size_factor
 ):
@@ -68,11 +80,11 @@ def get_loaders(
     train_dataset = imdb_dataset["train"]
     train_dataset_df = train_dataset.to_pandas()
 
-    validate_dataset, test_dataset = imdb_dataset["test"].train_test_split(0.4).values()
-    validate_dataset_df = validate_dataset.to_pandas()
+    val_dataset, test_dataset = imdb_dataset["test"].train_test_split(0.5).values()
+    val_dataset_df = val_dataset.to_pandas()[:validate_dataset_size]
     test_dataset_df = test_dataset.to_pandas()
 
-    for df in [train_dataset_df, validate_dataset_df, test_dataset_df]:
+    for df in [train_dataset_df, val_dataset_df, test_dataset_df]:
         df["preprocessed_text"] = df["text"].apply(
             review_preprocessing, stopwords=stopwords
         )
@@ -80,22 +92,15 @@ def get_loaders(
     freqs = get_freqs(train_dataset_df, tokenizer_size_factor)
     vocab_size = len(freqs) + 1
     top_words_map = {word: index + 1 for index, (word, _) in enumerate(freqs)}
-    x_train, y_train = tokenize_dataset(train_dataset_df, top_words_map, seq_max_length)
-    x_val, y_val = tokenize_dataset(validate_dataset_df, top_words_map, seq_max_length)
 
-    x_train_pad = left_pad(x_train)
-    y_train_tensor = torch.stack(y_train)
-    x_val_pad = left_pad(x_val[:validate_dataset_size])
-    y_val_tensor = torch.stack(y_val[:validate_dataset_size])
+    def _tokenize_dataset(dataset):
+        return tokenize_dataset(dataset, top_words_map, seq_max_length)
 
-    train_tensor_data = torch.utils.data.TensorDataset(x_train_pad, y_train_tensor)
-    val_tensor_data = torch.utils.data.TensorDataset(x_val_pad, y_val_tensor)
-
-    train_data_loader = torch.utils.data.DataLoader(
-        train_tensor_data, batch_size=batch_size, shuffle=True
+    train_data_loader = dataset_to_data_loader(
+        train_dataset_df, _tokenize_dataset, batch_size
     )
-    val_data_loader = torch.utils.data.DataLoader(
-        val_tensor_data, batch_size=batch_size, shuffle=True
+    val_data_loader = dataset_to_data_loader(
+        val_dataset_df, _tokenize_dataset, batch_size
     )
 
     return vocab_size, train_data_loader, val_data_loader
