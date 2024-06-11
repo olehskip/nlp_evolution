@@ -2,17 +2,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sklearn
 
 import matplotlib.pyplot as plt
 
-from preprocess import get_loaders
+import preprocess
+import word2vec
 
 
 class RNNModel(nn.Module):
     def __init__(
         self,
-        vocab_size,
-        embeded_size,
+        embedding_model: nn.Module,
+        embedding_dim,
         rnn_hidden_size,
         rnn_num_layers,
         rnn_dropout,
@@ -20,9 +22,9 @@ class RNNModel(nn.Module):
     ):
         super(RNNModel, self).__init__()
 
-        self.emb = nn.Embedding(vocab_size, embeded_size)
+        self.emb = embedding_model
         self.rnn = nn.GRU(
-            embeded_size,
+            embedding_dim,
             rnn_hidden_size,
             rnn_num_layers,
             batch_first=True,
@@ -52,15 +54,16 @@ class RNNModel(nn.Module):
 class RNNTrainer:
     def __init__(
         self,
-        train_data_loader,
-        val_data_loader,
-        vocab_size,
-        embeded_size,
-        rnn_hidden_size,
-        rnn_num_layers,
-        rnn_dropout,
-        linear_sizes,
-        device,
+        train_data_loader: torch.utils.data.DataLoader,
+        val_data_loader: torch.utils.data.DataLoader,
+        embedding_model: int,
+        embedding_train: bool,
+        embedding_dim: int,
+        rnn_hidden_size: int,
+        rnn_num_layers: int,
+        rnn_dropout: float,
+        linear_sizes: list[int],
+        device: str,
     ):
         self.train_data_loader, self.val_data_loader = (
             train_data_loader,
@@ -69,17 +72,21 @@ class RNNTrainer:
 
         self.device = device
         self.model = RNNModel(
-            vocab_size,
-            embeded_size,
+            embedding_model,
+            embedding_dim,
             rnn_hidden_size,
             rnn_num_layers,
             rnn_dropout,
             linear_sizes,
         ).to(device)
+        if not embedding_train:
+            for param in embedding_model.parameters():
+                param.requires_grad = False
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.BCELoss()
-        for p in self.model.parameters():
-            p.register_hook(lambda grad: torch.clamp(grad, -16, 16))
+        for param in self.model.parameters():
+            if param.requires_grad:
+                param.register_hook(lambda grad: torch.clamp(grad, -16, 16))
 
     @torch.no_grad
     def validate(self):
@@ -128,24 +135,64 @@ class RNNTrainer:
 
 
 if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device = {device}")
-    vocab_size, train_data_loader, val_data_loader = get_loaders(
-        validate_dataset_size=2500,
-        batch_size=128,
-        seq_max_length=1024,
-        tokenizer_size_factor=0.5,
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    BATCH_SIZE = 128
+
+    print(f"Device = {DEVICE}")
+
+    clean_dataset = preprocess.get_prepared_dataset()
+    train_dataset, val_dataset = sklearn.model_selection.train_test_split(
+        clean_dataset, test_size=0.2
     )
+    tokenizer = preprocess.FreqTokenizer(
+        train_dataset["preprocessed_text"].values.tolist(), 0.5
+    )
+    preprocess.add_tokens(train_dataset, tokenizer)
+    preprocess.add_tokens(val_dataset, tokenizer)
+
+    train_data_loader = preprocess.create_data_loader(train_dataset, BATCH_SIZE)
+    val_data_loader = preprocess.create_data_loader(val_dataset, BATCH_SIZE)
+
+    print("Dataset is ready")
+    vocab_size = tokenizer.vocab_size
+
+    SKIP_GRAM_CONTEXT_SIZE = 4
+    train_skip_gram_data_loader = word2vec.build_skip_gram_dataset(
+        train_dataset["tokens"].values.tolist(),
+        SKIP_GRAM_CONTEXT_SIZE,
+        BATCH_SIZE,
+    )
+    print("Train skip-gram dataset is ready")
+    val_skip_gram_data_loader = word2vec.build_skip_gram_dataset(
+        val_dataset["tokens"].values.tolist(), SKIP_GRAM_CONTEXT_SIZE, BATCH_SIZE
+    )
+    print("Validate skip-gram dataset is ready")
+    EMBEDDING_DIM = 64
+    skip_gram_trainer = word2vec.SkipGramTrainer(
+        train_skip_gram_data_loader,
+        val_skip_gram_data_loader,
+        vocab_size=vocab_size,
+        embedding_dim=EMBEDDING_DIM,
+        context_size=SKIP_GRAM_CONTEXT_SIZE,
+        device=DEVICE,
+    )
+
+    skip_gram_trainer.train(16)
+    # exit()
+
     rnn_trainer = RNNTrainer(
         train_data_loader,
         val_data_loader,
-        vocab_size=vocab_size,
-        embeded_size=128,
+        # embedding_model=nn.Embedding(vocab_size, EMBEDDING_DIM),
+        embedding_model=skip_gram_trainer.model.emb,
+        embedding_train=False,
+        embedding_dim=EMBEDDING_DIM,
         rnn_hidden_size=256,
         rnn_num_layers=3,
         rnn_dropout=0.5,
         linear_sizes=[512, 512],
-        device=device,
+        device=DEVICE,
     )
+    print(f"Initial validation_score = {rnn_trainer.validate()}")
     rnn_trainer.train(max_epochs=64, target_validation_score=90)
     print(f"Final validation_score = {rnn_trainer.validate()}")

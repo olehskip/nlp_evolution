@@ -1,67 +1,55 @@
 from datasets import load_dataset
 import nltk
 import torch
+import pandas
 
 from collections import Counter
 import re
 import string
+import abc
 
 
-def get_freqs(dataset, size_factor):
-    cnt = Counter(
-        word for text in dataset["preprocessed_text"] for word in text.split()
+class Tokenizer(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def tokenize(self, text: str) -> list[list[int]]:
+        pass
+
+
+class FreqTokenizer:
+    def __init__(self, texts, freqs_size_factor):
+        cnt = Counter(word for text in texts for word in text.split())
+        freqs = cnt.most_common(round(len(cnt) * freqs_size_factor))
+        self.vocab_size = len(freqs) + 1
+        self.top_words_map = {word: index + 1 for index, (word, _) in enumerate(freqs)}
+
+    def tokenize(self, text: str) -> list[list[int]]:
+        return [
+            self.top_words_map[word]
+            for word in text.split()
+            if word in self.top_words_map
+        ]
+
+
+def create_data_loader(
+    dataset: pandas.DataFrame,
+    batch_size: int,
+    device: str = "cpu",
+):
+    def seqs_to_tensor(seqs):
+        max_len = max(len(seq) for seq in seqs)
+        padded = torch.zeros((len(seqs), max_len), dtype=torch.int, device=device)
+        for i, seq in enumerate(seqs):
+            if len(seq) < max_len:
+                padded[i, max_len - len(seq) :] = torch.tensor(seq).to(padded)
+            else:
+                padded[i] = torch.tensor(seq[:max_len]).to(padded)
+
+        return padded
+
+    tensor_dataset = torch.utils.data.TensorDataset(
+        seqs_to_tensor(dataset["tokens"].values.tolist()),
+        torch.tensor([y for y in dataset["label"]], dtype=torch.float, device=device),
     )
-    return cnt.most_common(round(len(cnt) * size_factor))
-
-
-def tokenize_dataset(
-    dataset, top_words_map, max_length
-) -> (list[list[int]], list[int]):
-    xs = []
-    ys = []
-
-    for text, label in zip(dataset["preprocessed_text"], dataset["label"]):
-        xs.append(
-            torch.tensor(
-                [top_words_map[word] for word in text.split() if word in top_words_map][
-                    :max_length
-                ],
-                dtype=torch.int,
-            )
-        )
-        ys.append(torch.tensor(label, dtype=torch.float))
-
-    return xs, ys
-
-
-def left_pad(seqs):
-    max_len = max(len(seq) for seq in seqs)
-    padded = torch.zeros(
-        (len(seqs), max_len), device=seqs[0].device, dtype=seqs[0].dtype
-    )
-    for i, seq in enumerate(seqs):
-        if len(seq) < max_len:
-            padded[i, max_len - len(seq) :] = seq
-        else:
-            padded[i] = seq[:max_len]
-
-    return padded
-
-
-def review_preprocessing(text, stopwords):
-    text = text.lower()
-    text = re.sub("<.*?>", "", text)
-    text = "".join([c for c in text if c not in string.punctuation])
-    text = [word for word in text.split() if word not in stopwords]
-    text = " ".join(text)
-    return text
-
-
-def dataset_to_data_loader(dataset, tokenizer, batch_size):
-    xs, ys = tokenizer(dataset)
-    xs_pad = left_pad(xs)
-    ys_tensor = torch.stack(ys)
-    tensor_dataset = torch.utils.data.TensorDataset(xs_pad, ys_tensor)
     data_loader = torch.utils.data.DataLoader(
         tensor_dataset, batch_size=batch_size, shuffle=True
     )
@@ -69,38 +57,32 @@ def dataset_to_data_loader(dataset, tokenizer, batch_size):
     return data_loader
 
 
-def get_loaders(
-    validate_dataset_size, batch_size, seq_max_length, tokenizer_size_factor
-):
+def get_prepared_dataset() -> pandas.DataFrame:
+    imdb_dataset = load_dataset("stanfordnlp/imdb")
+
+    df = pandas.concat(
+        [imdb_dataset["train"].to_pandas(), imdb_dataset["test"].to_pandas()]
+    )
+
     nltk.download("stopwords", quiet=True)
     stopwords = set(nltk.corpus.stopwords.words("english"))
 
-    imdb_dataset = load_dataset("stanfordnlp/imdb")
+    def review_preprocessing(text, stopwords):
+        text = text.lower()
+        text = re.sub("<.*?>", "", text)
+        text = "".join([c for c in text if c not in string.punctuation])
+        text = [word for word in text.split() if word not in stopwords]
+        text = " ".join(text)
+        return text
 
-    train_dataset = imdb_dataset["train"]
-    train_dataset_df = train_dataset.to_pandas()
-
-    val_dataset, test_dataset = imdb_dataset["test"].train_test_split(0.5).values()
-    val_dataset_df = val_dataset.to_pandas()[:validate_dataset_size]
-    test_dataset_df = test_dataset.to_pandas()
-
-    for df in [train_dataset_df, val_dataset_df, test_dataset_df]:
-        df["preprocessed_text"] = df["text"].apply(
-            review_preprocessing, stopwords=stopwords
-        )
-
-    freqs = get_freqs(train_dataset_df, tokenizer_size_factor)
-    vocab_size = len(freqs) + 1
-    top_words_map = {word: index + 1 for index, (word, _) in enumerate(freqs)}
-
-    def _tokenize_dataset(dataset):
-        return tokenize_dataset(dataset, top_words_map, seq_max_length)
-
-    train_data_loader = dataset_to_data_loader(
-        train_dataset_df, _tokenize_dataset, batch_size
-    )
-    val_data_loader = dataset_to_data_loader(
-        val_dataset_df, _tokenize_dataset, batch_size
+    df["preprocessed_text"] = df["text"].apply(
+        review_preprocessing, stopwords=stopwords
     )
 
-    return vocab_size, train_data_loader, val_data_loader
+    return df
+
+
+def add_tokens(dataset: pandas.DataFrame, tokenizer: Tokenizer):
+    dataset["tokens"] = dataset["preprocessed_text"].apply(
+        lambda x: tokenizer.tokenize(x)
+    )
