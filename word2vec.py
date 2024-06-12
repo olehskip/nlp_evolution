@@ -5,7 +5,7 @@ import numpy as np
 import tqdm
 
 
-def build_skip_gram_dataset(
+def build_cbow_dataset(
     tokens_list: list[str],
     context_size: int,
     batch_size: int,
@@ -14,7 +14,7 @@ def build_skip_gram_dataset(
     assert context_size > 0 and context_size % 2 == 0
     context_size_half = context_size // 2
     xs, ys = [], []
-    for tokens in tqdm.tqdm(tokens_list, desc="Building skip-gram dataset"):
+    for tokens in tqdm.tqdm(tokens_list, desc="Building CBOW dataset"):
         for i, token in enumerate(tokens):
             start = i - context_size_half
             end = i + context_size_half
@@ -37,21 +37,20 @@ def build_skip_gram_dataset(
     return data_loader
 
 
-class SkipGram(nn.Module):
+class CBOWModel(nn.Module):
     def __init__(self, vocab_size: int, embedding_dim: int, context_size: int):
-        super(SkipGram, self).__init__()
+        super(CBOWModel, self).__init__()
         self.emb = nn.Embedding(vocab_size, embedding_dim)
-        self.linear = nn.Linear(context_size * embedding_dim, vocab_size)
+        self.linear = nn.Linear(embedding_dim, vocab_size)
 
     def forward(self, x):
-        batch_size = x.shape[0]
         y = self.emb(x)
-        y = y.view(batch_size, -1)
+        y = y.sum(dim=1)
         y = self.linear(y)
         return y
 
 
-class SkipGramTrainer:
+class CBOWTrainer:
     def __init__(
         self,
         train_data_loader: torch.utils.data.DataLoader,
@@ -66,7 +65,7 @@ class SkipGramTrainer:
             val_data_loader,
         )
         self.device = device
-        self.model = SkipGram(vocab_size, embedding_dim, context_size).to(device)
+        self.model = CBOWModel(vocab_size, embedding_dim, context_size).to(device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.CrossEntropyLoss()
 
@@ -75,7 +74,9 @@ class SkipGramTrainer:
             self.model.train()
             loss_epoch = []
 
-            for inputs, labels in tqdm.tqdm(self.train_data_loader, desc=f"Training skip-gram epoch #{epoch}"):
+            for inputs, labels in tqdm.tqdm(
+                self.train_data_loader, desc=f"Training CBOW epoch #{epoch}"
+            ):
                 xs = inputs.to(self.device)
                 ys = labels.to(self.device)
                 out = self.model.forward(xs)

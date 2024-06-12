@@ -156,35 +156,34 @@ if __name__ == "__main__":
     print("Dataset is ready")
     vocab_size = tokenizer.vocab_size
 
-    SKIP_GRAM_CONTEXT_SIZE = 4
-    train_skip_gram_data_loader = word2vec.build_skip_gram_dataset(
+    CBOW_CONTEXT_SIZE = 4
+    train_cbow_data_loader = word2vec.build_cbow_dataset(
         train_dataset["tokens"].values.tolist(),
-        SKIP_GRAM_CONTEXT_SIZE,
+        CBOW_CONTEXT_SIZE,
         BATCH_SIZE,
     )
-    print("Train skip-gram dataset is ready")
-    val_skip_gram_data_loader = word2vec.build_skip_gram_dataset(
-        val_dataset["tokens"].values.tolist(), SKIP_GRAM_CONTEXT_SIZE, BATCH_SIZE
+    print("Train CBOW dataset is ready")
+    val_cbow_data_loader = word2vec.build_cbow_dataset(
+        val_dataset["tokens"].values.tolist(), CBOW_CONTEXT_SIZE, BATCH_SIZE
     )
-    print("Validate skip-gram dataset is ready")
+    print("Validate CBOW dataset is ready")
     EMBEDDING_DIM = 64
-    skip_gram_trainer = word2vec.SkipGramTrainer(
-        train_skip_gram_data_loader,
-        val_skip_gram_data_loader,
+    cbow_trainer = word2vec.CBOWTrainer(
+        train_cbow_data_loader,
+        val_cbow_data_loader,
         vocab_size=vocab_size,
         embedding_dim=EMBEDDING_DIM,
-        context_size=SKIP_GRAM_CONTEXT_SIZE,
+        context_size=CBOW_CONTEXT_SIZE,
         device=DEVICE,
     )
 
-    skip_gram_trainer.train(16)
-    # exit()
+    cbow_trainer.train(10)
 
     rnn_trainer = RNNTrainer(
         train_data_loader,
         val_data_loader,
         # embedding_model=nn.Embedding(vocab_size, EMBEDDING_DIM),
-        embedding_model=skip_gram_trainer.model.emb,
+        embedding_model=cbow_trainer.model.emb,
         embedding_train=False,
         embedding_dim=EMBEDDING_DIM,
         rnn_hidden_size=256,
