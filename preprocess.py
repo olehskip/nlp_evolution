@@ -15,8 +15,8 @@ class Tokenizer(metaclass=abc.ABCMeta):
         pass
 
 
-class FreqTokenizer:
-    def __init__(self, texts, freqs_size_factor):
+class FreqTokenizer(Tokenizer):
+    def __init__(self, texts: list[str], freqs_size_factor: float = 1):
         cnt = Counter(word for text in texts for word in text.split())
         freqs = cnt.most_common(round(len(cnt) * freqs_size_factor))
         self.vocab_size = len(freqs) + 1
