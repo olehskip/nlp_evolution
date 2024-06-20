@@ -2,6 +2,7 @@ import os
 import sklearn
 import torch
 from torch import nn
+import pandas
 
 import preprocess
 import word2vec
@@ -86,11 +87,19 @@ def get_model():
         exit()
 
 
-if __name__ == "__main__":
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    BATCH_SIZE = 512
+def get_datasets():
+    cached_dataset = os.getenv("cached_dataset", True)
 
-    print(f"Device = {DEVICE}")
+    if cached_dataset:
+        try:
+            train_dataset = pandas.read_pickle("train_dataset.pkl")
+            val_dataset = pandas.read_pickle("val_dataset.pkl")
+        except FileNotFoundError as e:
+            print(
+                f'Caught exception while reading cached datasets "{e}".\nFallback to creating datasets'
+            )
+        else:
+            print("Successfully loaded cached datasets")
 
     clean_dataset = preprocess.get_prepared_dataset()
     train_dataset, val_dataset = sklearn.model_selection.train_test_split(
@@ -101,12 +110,21 @@ if __name__ == "__main__":
     )
     preprocess.add_tokens(train_dataset, tokenizer)
     preprocess.add_tokens(val_dataset, tokenizer)
+    train_dataset.to_pickle("train_dataset.pkl")
+    val_dataset.to_pickle("val_dataset.pkl")
+    return train_dataset, val_dataset, tokenizer.vocab_size
 
+
+if __name__ == "__main__":
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    BATCH_SIZE = 512
+
+    print(f"Device = {DEVICE}")
+
+    train_dataset, val_dataset, vocab_size = get_datasets()
     train_data_loader = preprocess.create_data_loader(train_dataset, BATCH_SIZE, DEVICE)
     val_data_loader = preprocess.create_data_loader(val_dataset, BATCH_SIZE, DEVICE)
-
-    print("Dataset is ready")
-    vocab_size = tokenizer.vocab_size
+    print("Datasets are ready")
 
     EMBEDDING_DIM = 16
     embedding_model, embedding_train = get_embedding_model(
