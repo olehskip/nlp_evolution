@@ -6,6 +6,8 @@ from torch import nn
 import preprocess
 import word2vec
 import rnn
+import cnn
+from trainer import Trainer
 
 
 def get_embedding_model(
@@ -59,6 +61,31 @@ def get_embedding_model(
     return word2vec_trainer.model.emb, False
 
 
+def get_model():
+    model_name = os.getenv("model_name", "rnn")
+    if model_name == "rnn":
+        return rnn.RNNModel(
+            embedding_model=embedding_model,
+            embedding_dim=EMBEDDING_DIM,
+            rnn_hidden_size=64,
+            rnn_num_layers=2,
+            rnn_dropout=0.8,
+            linear_sizes=[],
+            attention_heads=None,
+        )
+    elif model_name == "cnn":
+        return cnn.CNNModel(
+            embedding_model=embedding_model,
+            embedding_dim=EMBEDDING_DIM,
+            region_sizes=[2, 3, 4, 5],
+            feature_maps=100,
+            dropout=0.5,
+        )
+    else:
+        print(f"There is no a model named {model_name}")
+        exit()
+
+
 if __name__ == "__main__":
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     BATCH_SIZE = 512
@@ -75,8 +102,8 @@ if __name__ == "__main__":
     preprocess.add_tokens(train_dataset, tokenizer)
     preprocess.add_tokens(val_dataset, tokenizer)
 
-    train_data_loader = preprocess.create_data_loader(train_dataset, BATCH_SIZE)
-    val_data_loader = preprocess.create_data_loader(val_dataset, BATCH_SIZE)
+    train_data_loader = preprocess.create_data_loader(train_dataset, BATCH_SIZE, DEVICE)
+    val_data_loader = preprocess.create_data_loader(val_dataset, BATCH_SIZE, DEVICE)
 
     print("Dataset is ready")
     vocab_size = tokenizer.vocab_size
@@ -86,18 +113,14 @@ if __name__ == "__main__":
         EMBEDDING_DIM, vocab_size, DEVICE
     )
 
-    rnn_trainer = rnn.RNNTrainer(
-        train_data_loader,
-        val_data_loader,
-        embedding_model=embedding_model,
+    model = get_model()
+
+    rnn_trainer = Trainer(
+        train_data_loader=train_data_loader,
+        val_data_loader=val_data_loader,
+        model=model,
         embedding_train=embedding_train,
-        embedding_dim=EMBEDDING_DIM,
-        rnn_hidden_size=64,
-        rnn_num_layers=2,
-        rnn_dropout=0.8,
-        linear_sizes=[],
         device=DEVICE,
-        attention_heads=None,
     )
 
     print(

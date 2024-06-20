@@ -51,7 +51,10 @@ def create_data_loader(
         torch.tensor([y for y in dataset["label"]], dtype=torch.float, device=device),
     )
     data_loader = torch.utils.data.DataLoader(
-        tensor_dataset, batch_size=batch_size, shuffle=True
+        tensor_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=(device == "cpu"),
     )
 
     return data_loader
