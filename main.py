@@ -3,6 +3,7 @@ import sklearn
 import torch
 from torch import nn
 import pandas
+import pickle
 
 import preprocess
 import word2vec
@@ -94,24 +95,27 @@ def get_datasets():
         try:
             train_dataset = pandas.read_pickle("train_dataset.pkl")
             val_dataset = pandas.read_pickle("val_dataset.pkl")
+            tokenizer = pickle.load(open("tokenizer.pkl", "rb"))
         except FileNotFoundError as e:
             print(
                 f'Caught exception while reading cached datasets "{e}".\nFallback to creating datasets'
             )
+            clean_dataset = preprocess.get_prepared_dataset()
+
+            train_dataset, val_dataset = sklearn.model_selection.train_test_split(
+                clean_dataset, test_size=0.2
+            )
+            tokenizer = preprocess.FreqTokenizer(
+                train_dataset["preprocessed_text"].values.tolist()
+            )
+            preprocess.add_tokens(train_dataset, tokenizer)
+            preprocess.add_tokens(val_dataset, tokenizer)
+            train_dataset.to_pickle("train_dataset.pkl")
+            val_dataset.to_pickle("val_dataset.pkl")
+            pickle.dump(tokenizer, open("tokenizer.pkl", "wb"))
         else:
             print("Successfully loaded cached datasets")
 
-    clean_dataset = preprocess.get_prepared_dataset()
-    train_dataset, val_dataset = sklearn.model_selection.train_test_split(
-        clean_dataset, test_size=0.2
-    )
-    tokenizer = preprocess.FreqTokenizer(
-        train_dataset["preprocessed_text"].values.tolist()
-    )
-    preprocess.add_tokens(train_dataset, tokenizer)
-    preprocess.add_tokens(val_dataset, tokenizer)
-    train_dataset.to_pickle("train_dataset.pkl")
-    val_dataset.to_pickle("val_dataset.pkl")
     return train_dataset, val_dataset, tokenizer.vocab_size
 
 
